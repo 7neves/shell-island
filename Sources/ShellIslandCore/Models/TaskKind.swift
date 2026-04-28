@@ -32,9 +32,16 @@ public enum TaskKind: String, Codable, Sendable {
         case .claudeCode:
             return executable == "claude"
         case .npmRun:
-            guard executable == "npm" else { return false }
-            return command.contains(" run ") || command.hasSuffix(" run")
-                || command.contains(" start") || command.hasSuffix(" start")
+            if executable == "npm" {
+                return command.contains(" run ") || command.hasSuffix(" run")
+                    || command.contains(" start") || command.hasSuffix(" start")
+            }
+            // npm 也可能以 node wrapper 形式运行：node /path/npm-cli.js run dev
+            if executable == "node", let script = nodeScriptName(of: command), script.hasPrefix("npm") {
+                return command.contains(" run ") || command.hasSuffix(" run")
+                    || command.contains(" start") || command.hasSuffix(" start")
+            }
+            return false
         case .pnpmRun:
             if executable == "pnpm" { return matchesNodeScriptLike(command) }
             // pnpm 常以 node wrapper 形式运行：node /path/pnpm.cjs run dev

@@ -22,54 +22,39 @@ public struct ProcessSnapshot: Sendable, Equatable {
     }
 }
 
-/// ps 输出解析后的中间结构
-struct RunningProcess: Sendable, Equatable {
-    let pid: Int32
-    let ppid: Int32
-    let tty: String
-    let elapsed: String
-    let command: String
-}
-
 /// 进程发现器：扫描 kitty 进程树中运行的 brew/claude/npm run 任务
 public struct ProcessDiscovery: Sendable {
-    let commandRunner: ShellCommandRunner
-    let lsofRunner: ShellCommandRunner
+    let procInfo: ProcInfo
 
-    public init(
-        commandRunner: ShellCommandRunner = ShellCommandRunner(timeout: ShellCommandRunner.psTimeout),
-        lsofRunner: ShellCommandRunner = ShellCommandRunner(timeout: ShellCommandRunner.lsofTimeout)
-    ) {
-        self.commandRunner = commandRunner
-        self.lsofRunner = lsofRunner
+    public init(procInfo: ProcInfo = .live) {
+        self.procInfo = procInfo
     }
 
     /// 发现 kitty 进程树中的任务进程
     public func discoverTaskProcesses() -> [ProcessSnapshot] {
-        let processes = runningProcesses()
+        let processes = fetchProcesses()
         guard !processes.isEmpty else { return [] }
 
         let byPID = Dictionary(uniqueKeysWithValues: processes.map { ($0.pid, $0) })
         let candidates = processes.compactMap { proc -> ProcessSnapshot? in
-            guard !proc.tty.isEmpty, !proc.command.isEmpty else { return nil }
+            guard proc.tty != "??", !proc.command.isEmpty else { return nil }
 
             guard let kind = matchTaskKind(command: proc.command) else { return nil }
             guard isInKittyTree(pid: proc.pid, byPID: byPID) else { return nil }
             guard !hasMatchingAncestor(
                 pid: proc.pid,
                 kind: kind,
-                tty: normalizedTTY(proc.tty),
+                tty: proc.tty,
                 byPID: byPID
             ) else {
                 return nil
             }
 
-            let cwd = lsofWorkingDirectory(pid: proc.pid)
             return ProcessSnapshot(
                 pid: proc.pid, ppid: proc.ppid,
-                tty: normalizedTTY(proc.tty),
+                tty: proc.tty,
                 command: proc.command,
-                workingDirectory: cwd,
+                workingDirectory: proc.workingDirectory,
                 kind: kind
             )
         }
@@ -79,30 +64,9 @@ public struct ProcessDiscovery: Sendable {
 
     // MARK: - 内部方法
 
-    /// 执行 ps 并解析进程列表
-    func runningProcesses() -> [RunningProcess] {
-        guard let output = commandRunner.run("/bin/ps", ["-Ao", "pid=,ppid=,tty=,etime=,command="]) else {
-            return []
-        }
-        return output.split(separator: "\n").compactMap { line -> RunningProcess? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { return nil }
-
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 5 else { return nil }
-
-            guard let pid = Int32(parts[0]),
-                  let ppid = Int32(parts[1]) else { return nil }
-
-            let tty = String(parts[2])
-            let elapsed = String(parts[3])
-            let command = parts[4...].map(String.init).joined(separator: " ")
-
-            return RunningProcess(
-                pid: pid, ppid: ppid,
-                tty: tty, elapsed: elapsed, command: command
-            )
-        }
+    /// 使用 libproc API 获取所有进程信息
+    func fetchProcesses() -> [ProcProcessInfo] {
+        procInfo.listAll()
     }
 
     /// 判断命令是否匹配已知任务类型
@@ -114,7 +78,7 @@ public struct ProcessDiscovery: Sendable {
     }
 
     /// 判断进程是否属于 kitty 进程树
-    func isInKittyTree(pid: Int32, byPID: [Int32: RunningProcess]) -> Bool {
+    func isInKittyTree(pid: Int32, byPID: [Int32: ProcProcessInfo]) -> Bool {
         var currentPID = pid
         var visited = Set<Int32>()
 
@@ -139,7 +103,7 @@ public struct ProcessDiscovery: Sendable {
         pid: Int32,
         kind: TaskKind,
         tty: String,
-        byPID: [Int32: RunningProcess]
+        byPID: [Int32: ProcProcessInfo]
     ) -> Bool {
         var currentPID = pid
         var visited = Set<Int32>()
@@ -151,7 +115,7 @@ public struct ProcessDiscovery: Sendable {
             let parentPID = proc.ppid
             guard parentPID > 1, let parent = byPID[parentPID] else { break }
 
-            if normalizedTTY(parent.tty) == tty,
+            if parent.tty == tty,
                matchTaskKind(command: parent.command) == kind {
                 return true
             }
@@ -189,26 +153,6 @@ public struct ProcessDiscovery: Sendable {
             .replacingOccurrences(of: "/opt/homebrew/bin/", with: "")
             .replacingOccurrences(of: "/usr/local/bin/", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// 通过 lsof 获取进程工作目录
-    func lsofWorkingDirectory(pid: Int32) -> String? {
-        guard let output = lsofRunner.run("/usr/sbin/lsof", ["-a", "-p", "\(pid)", "-Fn"]) else {
-            return nil
-        }
-        for line in output.split(separator: "\n") {
-            if line.hasPrefix("n") {
-                return String(line.dropFirst())
-            }
-        }
-        return nil
-    }
-
-    /// TTY 归一化：确保有 /dev/ 前缀
-    func normalizedTTY(_ tty: String) -> String {
-        if tty.hasPrefix("/dev/") { return tty }
-        if tty.hasPrefix("tty") { return "/dev/\(tty)" }
-        return tty
     }
 }
 

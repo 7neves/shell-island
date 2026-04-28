@@ -7,7 +7,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 新任务发现
 
     func testApplySnapshotDiscoverNewTasks() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -26,7 +26,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 已消失任务标记完成
 
     func testApplySnapshotMarkDisappearedTaskCompleted() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -47,7 +47,7 @@ final class TaskMonitorTests: XCTestCase {
     }
 
     func testBrewInstallFailureInKittyOutputMarksTaskFailed() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         let failingText = """
         ==> Fetching downloads for: mole
@@ -96,7 +96,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - sessionRef 关联
 
     func testApplySnapshotUpdatesSessionRef() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -127,7 +127,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 多任务场景
 
     func testApplySnapshotMultipleTasks() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -151,7 +151,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 部分任务消失
 
     func testApplySnapshotPartialDisappearance() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -179,7 +179,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - clearCompletedTasks
 
     func testClearCompletedTasks() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -198,7 +198,7 @@ final class TaskMonitorTests: XCTestCase {
     }
 
     func testRerunNodeTaskSendsTextToOriginalKittyTab() async {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         final class Recorder: @unchecked Sendable {
             let lock = NSLock()
@@ -254,7 +254,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 重复发现不创建重复任务
 
     func testApplySnapshotNoDuplicateDiscovery() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 
@@ -274,7 +274,7 @@ final class TaskMonitorTests: XCTestCase {
     // MARK: - 同目录同命令复用同一条记录
 
     func testApplySnapshotReusesSameSignatureAfterRestart() {
-        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
         let kitty = KittyIntegration(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
         let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
 

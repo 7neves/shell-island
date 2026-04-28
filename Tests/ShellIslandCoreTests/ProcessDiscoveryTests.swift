@@ -3,22 +3,18 @@ import XCTest
 
 final class ProcessDiscoveryTests: XCTestCase {
 
-    // MARK: - ps 输出解析
+    // MARK: - 进程扫描
 
-    func testParsePSOutput() {
-        let psOutput = """
-            1     0 ??      01:23:45 /sbin/launchd
-            100   1 ??       00:00:01 /Applications/kitty.app/Contents/MacOS/kitty
-            200 100 ttys000  00:00:10 /bin/zsh
-            300 200 ttys000  00:01:00 brew install ffmpeg
-            """
-        let runner = ShellCommandRunner(runner: { path, args in
-            XCTAssertEqual(path, "/bin/ps")
-            return psOutput
-        })
+    func testFetchProcesses() {
+        let mockProcesses = [
+            ProcProcessInfo(pid: 1, ppid: 0, tty: "??", command: "/sbin/launchd", workingDirectory: nil),
+            ProcProcessInfo(pid: 100, ppid: 1, tty: "??", command: "/Applications/kitty.app/Contents/MacOS/kitty", workingDirectory: nil),
+            ProcProcessInfo(pid: 200, ppid: 100, tty: "/dev/ttys000", command: "/bin/zsh", workingDirectory: nil),
+            ProcProcessInfo(pid: 300, ppid: 200, tty: "/dev/ttys000", command: "brew install ffmpeg", workingDirectory: nil),
+        ]
 
-        let discovery = ProcessDiscovery(commandRunner: runner)
-        let processes = discovery.runningProcesses()
+        let discovery = ProcessDiscovery(procInfo: ProcInfo(listAll: { mockProcesses }))
+        let processes = discovery.fetchProcesses()
 
         XCTAssertEqual(processes.count, 4)
         XCTAssertEqual(processes[0].pid, 1)
@@ -28,16 +24,15 @@ final class ProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(processes[2].pid, 200)
         XCTAssertEqual(processes[2].ppid, 100)
-        XCTAssertEqual(processes[2].tty, "ttys000")
+        XCTAssertEqual(processes[2].tty, "/dev/ttys000")
 
         XCTAssertEqual(processes[3].pid, 300)
         XCTAssertEqual(processes[3].command, "brew install ffmpeg")
     }
 
-    func testParseEmptyOutput() {
-        let runner = ShellCommandRunner(runner: { _, _ in nil })
-        let discovery = ProcessDiscovery(commandRunner: runner)
-        let processes = discovery.runningProcesses()
+    func testFetchProcessesEmpty() {
+        let discovery = ProcessDiscovery(procInfo: ProcInfo(listAll: { [] }))
+        let processes = discovery.fetchProcesses()
         XCTAssertTrue(processes.isEmpty)
     }
 
@@ -45,15 +40,14 @@ final class ProcessDiscoveryTests: XCTestCase {
 
     func testIsInKittyTree() {
         let processes = [
-            RunningProcess(pid: 1, ppid: 0, tty: "??", elapsed: "01:00:00", command: "/sbin/launchd"),
-            RunningProcess(pid: 100, ppid: 1, tty: "??", elapsed: "00:10:00", command: "/Applications/kitty.app/Contents/MacOS/kitty"),
-            RunningProcess(pid: 200, ppid: 100, tty: "ttys000", elapsed: "00:05:00", command: "/bin/zsh"),
-            RunningProcess(pid: 300, ppid: 200, tty: "ttys000", elapsed: "00:01:00", command: "brew install foo"),
+            ProcProcessInfo(pid: 1, ppid: 0, tty: "??", command: "/sbin/launchd", workingDirectory: nil),
+            ProcProcessInfo(pid: 100, ppid: 1, tty: "??", command: "/Applications/kitty.app/Contents/MacOS/kitty", workingDirectory: nil),
+            ProcProcessInfo(pid: 200, ppid: 100, tty: "/dev/ttys000", command: "/bin/zsh", workingDirectory: nil),
+            ProcProcessInfo(pid: 300, ppid: 200, tty: "/dev/ttys000", command: "brew install foo", workingDirectory: nil),
         ]
         let byPID = Dictionary(uniqueKeysWithValues: processes.map { ($0.pid, $0) })
 
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         // brew 进程 (300) → zsh (200) → kitty (100) ✓
         XCTAssertTrue(discovery.isInKittyTree(pid: 300, byPID: byPID))
@@ -67,15 +61,14 @@ final class ProcessDiscoveryTests: XCTestCase {
 
     func testIsNotInKittyTree() {
         let processes = [
-            RunningProcess(pid: 1, ppid: 0, tty: "??", elapsed: "01:00:00", command: "/sbin/launchd"),
-            RunningProcess(pid: 50, ppid: 1, tty: "??", elapsed: "00:10:00", command: "/Applications/Terminal.app/Contents/MacOS/Terminal"),
-            RunningProcess(pid: 200, ppid: 50, tty: "ttys001", elapsed: "00:05:00", command: "/bin/zsh"),
-            RunningProcess(pid: 300, ppid: 200, tty: "ttys001", elapsed: "00:01:00", command: "brew install foo"),
+            ProcProcessInfo(pid: 1, ppid: 0, tty: "??", command: "/sbin/launchd", workingDirectory: nil),
+            ProcProcessInfo(pid: 50, ppid: 1, tty: "??", command: "/Applications/Terminal.app/Contents/MacOS/Terminal", workingDirectory: nil),
+            ProcProcessInfo(pid: 200, ppid: 50, tty: "/dev/ttys001", command: "/bin/zsh", workingDirectory: nil),
+            ProcProcessInfo(pid: 300, ppid: 200, tty: "/dev/ttys001", command: "brew install foo", workingDirectory: nil),
         ]
         let byPID = Dictionary(uniqueKeysWithValues: processes.map { ($0.pid, $0) })
 
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         // brew 进程在 Terminal.app 下，不在 kitty 进程树
         XCTAssertFalse(discovery.isInKittyTree(pid: 300, byPID: byPID))
@@ -84,8 +77,7 @@ final class ProcessDiscoveryTests: XCTestCase {
     // MARK: - TaskKind 匹配
 
     func testMatchTaskKind() {
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         XCTAssertEqual(discovery.matchTaskKind(command: "brew install ffmpeg"), .brew)
         XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/bin/brew install git"), .brew)
@@ -118,8 +110,7 @@ final class ProcessDiscoveryTests: XCTestCase {
     // MARK: - kitty 进程判断
 
     func testIsKittyProcess() {
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         XCTAssertTrue(discovery.isKittyProcess(command: "/Applications/kitty.app/Contents/MacOS/kitty"))
         XCTAssertTrue(discovery.isKittyProcess(command: "/usr/local/bin/kitty"))
@@ -128,38 +119,19 @@ final class ProcessDiscoveryTests: XCTestCase {
         XCTAssertFalse(discovery.isKittyProcess(command: "/bin/zsh"))
     }
 
-    // MARK: - TTY 归一化
-
-    func testNormalizedTTY() {
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
-
-        XCTAssertEqual(discovery.normalizedTTY("ttys000"), "/dev/ttys000")
-        XCTAssertEqual(discovery.normalizedTTY("/dev/ttys001"), "/dev/ttys001")
-        XCTAssertEqual(discovery.normalizedTTY("??"), "??")
-    }
-
     // MARK: - 完整发现流程
 
     func testDiscoverTaskProcesses() {
-        let psOutput = """
-            1     0 ??      01:00:00 /sbin/launchd
-            100   1 ??       00:10:00 /Applications/kitty.app/Contents/MacOS/kitty
-            200 100 ttys000  00:05:00 /bin/zsh
-            300 200 ttys000  00:01:00 brew install ffmpeg
-            400 200 ttys000  00:00:30 npm run dev
-            500   1 ttys001  00:02:00 brew install git
-            """
-        let runner = ShellCommandRunner(runner: { path, args in
-            if path == "/bin/ps" { return psOutput }
-            return nil
-        })
-        let lsofRunner = ShellCommandRunner(runner: { path, args in
-            if path == "/usr/sbin/lsof" { return "n/Users/test/project" }
-            return nil
-        })
+        let processes = [
+            ProcProcessInfo(pid: 1, ppid: 0, tty: "??", command: "/sbin/launchd", workingDirectory: nil),
+            ProcProcessInfo(pid: 100, ppid: 1, tty: "??", command: "/Applications/kitty.app/Contents/MacOS/kitty", workingDirectory: nil),
+            ProcProcessInfo(pid: 200, ppid: 100, tty: "/dev/ttys000", command: "/bin/zsh", workingDirectory: nil),
+            ProcProcessInfo(pid: 300, ppid: 200, tty: "/dev/ttys000", command: "brew install ffmpeg", workingDirectory: "/Users/test/project"),
+            ProcProcessInfo(pid: 400, ppid: 200, tty: "/dev/ttys000", command: "npm run dev", workingDirectory: "/Users/test/project"),
+            ProcProcessInfo(pid: 500, ppid: 1, tty: "/dev/ttys001", command: "brew install git", workingDirectory: nil),
+        ]
 
-        let discovery = ProcessDiscovery(commandRunner: runner, lsofRunner: lsofRunner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo(listAll: { processes }))
         let snapshots = discovery.discoverTaskProcesses()
 
         // 进程 300 和 400 在 kitty 树下且有 TTY，应被识别
@@ -179,19 +151,15 @@ final class ProcessDiscoveryTests: XCTestCase {
     }
 
     func testDiscoverTaskProcessesCollapsesMatchingAncestorAndChild() {
-        let psOutput = """
-            1     0 ??      01:00:00 /sbin/launchd
-            100   1 ??       00:10:00 /Applications/kitty.app/Contents/MacOS/kitty
-            200 100 ttys000  00:05:00 /bin/zsh
-            300 200 ttys000  00:01:00 claude
-            301 300 ttys000  00:00:58 claude
-            """
-        let runner = ShellCommandRunner(runner: { path, _ in
-            if path == "/bin/ps" { return psOutput }
-            return nil
-        })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let processes = [
+            ProcProcessInfo(pid: 1, ppid: 0, tty: "??", command: "/sbin/launchd", workingDirectory: nil),
+            ProcProcessInfo(pid: 100, ppid: 1, tty: "??", command: "/Applications/kitty.app/Contents/MacOS/kitty", workingDirectory: nil),
+            ProcProcessInfo(pid: 200, ppid: 100, tty: "/dev/ttys000", command: "/bin/zsh", workingDirectory: nil),
+            ProcProcessInfo(pid: 300, ppid: 200, tty: "/dev/ttys000", command: "claude", workingDirectory: nil),
+            ProcProcessInfo(pid: 301, ppid: 300, tty: "/dev/ttys000", command: "claude", workingDirectory: nil),
+        ]
 
+        let discovery = ProcessDiscovery(procInfo: ProcInfo(listAll: { processes }))
         let snapshots = discovery.discoverTaskProcesses()
 
         XCTAssertEqual(snapshots.count, 1)
@@ -200,8 +168,7 @@ final class ProcessDiscoveryTests: XCTestCase {
     }
 
     func testDeduplicatedSnapshotsCollapsesEquivalentCommandOnSameTTY() {
-        let runner = ShellCommandRunner(runner: { _, _ in "" })
-        let discovery = ProcessDiscovery(commandRunner: runner)
+        let discovery = ProcessDiscovery(procInfo: ProcInfo())
 
         let snapshots = [
             ProcessSnapshot(

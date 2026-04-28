@@ -47,8 +47,6 @@ public struct ShellCommandRunner: Sendable {
     }
 
     /// 预设超时配置
-    public static let psTimeout: TimeInterval = 0.5
-    public static let lsofTimeout: TimeInterval = 0.2
     public static let kittyTimeout: TimeInterval = 1.0
 
     /// 默认实现：Process + Pipe + 超时保护

@@ -4,6 +4,7 @@ import Foundation
 public struct KittyIntegration: Sendable {
     let commandRunner: ShellCommandRunner
     let socketAddress: String?
+    let procInfo: ProcInfo
 
     public enum KittyIntegrationError: Error, CustomStringConvertible {
         case commandFailed(command: String, stdout: String, stderr: String, exitCode: Int32, timedOut: Bool)
@@ -23,10 +24,12 @@ public struct KittyIntegration: Sendable {
 
     public init(
         commandRunner: ShellCommandRunner = ShellCommandRunner(timeout: ShellCommandRunner.kittyTimeout),
-        socketAddress: String? = ProcessInfo.processInfo.environment["KITTY_LISTEN_ON"]
+        socketAddress: String? = ProcessInfo.processInfo.environment["KITTY_LISTEN_ON"],
+        procInfo: ProcInfo = .live
     ) {
         self.commandRunner = commandRunner
         self.socketAddress = socketAddress
+        self.procInfo = procInfo
     }
 
     /// 检查 kitty 是否开启了 allow_remote_control
@@ -155,13 +158,7 @@ public struct KittyIntegration: Sendable {
     }
 
     private func parentPID(of pid: Int32) -> Int32? {
-        guard let result = commandRunner.runDetailed("/bin/ps", ["-p", "\(pid)", "-o", "ppid="]),
-              !result.timedOut,
-              result.exitCode == 0 else {
-            return nil
-        }
-        let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Int32(trimmed)
+        procInfo.parentPID(pid)
     }
 
     /// 跳转到指定 kitty 窗口/标签页
@@ -415,13 +412,8 @@ public struct KittyIntegration: Sendable {
     private func socketPreferenceScore(path: String) -> Int {
         // Higher is better.
         // If the path ends with "-<pid>" and that pid is the main kitty binary, prefer it.
-        guard let pid = Int32(path.split(separator: "-").last ?? "") else { return 0 }
-        guard let result = commandRunner.runDetailed("/bin/ps", ["-p", "\(pid)", "-o", "command="]),
-              !result.timedOut,
-              result.exitCode == 0 else {
-            return 0
-        }
-        let cmd = result.stdout
+        guard let pid = Int32(path.split(separator: "-").last ?? ""),
+              let cmd = procInfo.processCommand(pid) else { return 0 }
         if cmd.contains("/Applications/kitty.app/Contents/MacOS/kitty") {
             return 10
         }
