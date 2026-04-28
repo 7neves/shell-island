@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     @Published var setupState = SetupState()
     @Published var systemStats = SystemStats.zero
     @Published var isExpanded = false
+    @Published var attentionTaskIDs = Set<String>()
 
     private let overlay = OverlayPanelController()
     private let taskMonitor = TaskMonitor()
@@ -22,6 +23,41 @@ final class AppModel: ObservableObject {
 
     var runningCount: Int {
         taskState.runningCount
+    }
+
+    enum CollapsedStatusIndicator: Sendable, Equatable {
+        case hidden
+        case running
+        case attention
+        case failed
+        case succeeded
+    }
+
+    var collapsedStatusIndicator: CollapsedStatusIndicator {
+        if taskState.tasks.isEmpty { return .hidden }
+
+        // Highest priority: attention prompts (password/y/n/etc.)
+        if !attentionTaskIDs.isEmpty { return .attention }
+
+        // If anything failed recently, show failed.
+        if taskState.tasks.contains(where: { $0.status == .failed }) { return .failed }
+
+        // If still running, show running.
+        if runningCount > 0 { return .running }
+
+        // Otherwise, show last completion status.
+        if let latest = taskState.tasks.max(by: { $0.startedAt < $1.startedAt }) {
+            if latest.status == .succeeded { return .succeeded }
+            if latest.status == .failed { return .failed }
+        }
+
+        return .hidden
+    }
+
+    func needsAttention(_ task: ObservedTask) -> Bool {
+        if attentionTaskIDs.contains(task.id) { return true }
+        if task.status.isTerminating { return true }
+        return false
     }
 
     init(
@@ -44,9 +80,25 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .assign(to: &$setupState)
 
+        taskMonitor.$attentionTaskIDs
+            .receive(on: RunLoop.main)
+            .assign(to: &$attentionTaskIDs)
+
         systemStatsMonitor.$stats
             .receive(on: RunLoop.main)
             .assign(to: &$systemStats)
+
+        // Keep collapsed panel width in sync with running tasks (idle vs active).
+        taskMonitor.$taskState
+            .map { $0.runningCount > 0 }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] hasTasks in
+                guard let self else { return }
+                guard !self.isExpanded else { return }
+                self.overlay.updateCollapsed(hasTasks: hasTasks, preferredScreenID: nil)
+            }
+            .store(in: &cancellables)
 
         var loadedPreferences = preferencesStore.load()
         loadedPreferences.launchAtLogin = launchAtLoginController.currentStatus()
@@ -77,7 +129,7 @@ final class AppModel: ObservableObject {
     }
 
     func hideOverlay() {
-        overlay.hide()
+        overlay.hide(hasTasks: runningCount > 0)
         isExpanded = false
     }
 

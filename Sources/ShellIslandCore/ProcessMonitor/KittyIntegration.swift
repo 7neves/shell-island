@@ -115,7 +115,7 @@ public struct KittyIntegration: Sendable {
             return direct
         }
 
-        // 2) 对于 npm/codex/brew 等子进程，kitty @ ls 里的 pid 往往是所在 shell 的 pid。
+        // 2) 对于 npm/claude/brew 等子进程，kitty @ ls 里的 pid 往往是所在 shell 的 pid。
         //    这里沿父进程链向上查找，直到命中某个 leaf window pid。
         var current: Int32? = pid
         var visited = Set<Int32>()
@@ -221,6 +221,56 @@ public struct KittyIntegration: Sendable {
             exitCode: -1,
             timedOut: false
         )
+    }
+
+    /// Send text to an existing kitty leaf window (best-effort).
+    /// Note: The caller is responsible for including a trailing newline when they want to press Enter.
+    public func sendText(leafWindowId: Int, socket: String?, text: String) throws {
+        guard leafWindowId != 0 else {
+            throw KittyIntegrationError.commandFailed(
+                command: "kitty @ send-text --match id:<missing>",
+                stdout: "",
+                stderr: "leafWindowId is 0 (no session match).",
+                exitCode: -1,
+                timedOut: false
+            )
+        }
+        let args = kittyArgs(
+            ["@", "send-text", "--match", "id:\(leafWindowId)", text],
+            overrideSocket: socket
+        )
+        try runKittyCommandOrThrow(args)
+    }
+
+    /// Capture recent text from a kitty leaf window (best-effort).
+    public func getText(leafWindowId: Int, socket: String?) -> String? {
+        guard leafWindowId != 0 else { return nil }
+        let args = kittyArgs(
+            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "screen", "--ansi", "false"],
+            overrideSocket: socket
+        )
+        guard let result = commandRunner.runDetailed(kittyExecutable, args),
+              !result.timedOut,
+              result.exitCode == 0 else {
+            return nil
+        }
+        return result.stdout
+    }
+
+    /// Capture full scrollback text from a kitty leaf window (best-effort).
+    /// This is heavier than `getText` but necessary for detecting errors that have scrolled off-screen.
+    public func getTextAll(leafWindowId: Int, socket: String?) -> String? {
+        guard leafWindowId != 0 else { return nil }
+        let args = kittyArgs(
+            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "all", "--ansi", "false"],
+            overrideSocket: socket
+        )
+        guard let result = commandRunner.runDetailed(kittyExecutable, args),
+              !result.timedOut,
+              result.exitCode == 0 else {
+            return nil
+        }
+        return result.stdout
     }
 
     private func runKittyCommandOrThrow(_ args: [String]) throws {

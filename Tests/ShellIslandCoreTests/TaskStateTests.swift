@@ -99,11 +99,13 @@ final class TaskKindTests: XCTestCase {
         XCTAssertFalse(kind.matches(command: "npm run build"))
     }
 
-    func testMatchesCodex() {
-        let kind = TaskKind.codex
-        XCTAssertTrue(kind.matches(command: "codex fix bug"))
-        XCTAssertTrue(kind.matches(command: "/usr/local/codex/bin/run"))
-        XCTAssertFalse(kind.matches(command: "brew install codex"))
+    func testMatchesClaudeCode() {
+        let kind = TaskKind.claudeCode
+        XCTAssertTrue(kind.matches(command: "claude"))
+        XCTAssertTrue(kind.matches(command: "claude --help"))
+        XCTAssertTrue(kind.matches(command: "/usr/local/bin/claude"))
+        XCTAssertTrue(kind.matches(command: "/usr/local/bin/claude --api-key xxx"))
+        XCTAssertFalse(kind.matches(command: "brew install claude"))
     }
 
     func testMatchesNpmRun() {
@@ -116,7 +118,7 @@ final class TaskKindTests: XCTestCase {
 
     func testDisplayName() {
         XCTAssertEqual(TaskKind.brew.displayName, "brew")
-        XCTAssertEqual(TaskKind.codex.displayName, "codex")
+        XCTAssertEqual(TaskKind.claudeCode.displayName, "Claude Code")
         XCTAssertEqual(TaskKind.npmRun.displayName, "npm run")
     }
 }

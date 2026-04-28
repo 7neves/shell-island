@@ -48,6 +48,12 @@ public struct ObservedTask: Identifiable, Codable, Sendable, Equatable {
         return Self.formatDuration(interval)
     }
 
+    /// UI-friendly command preview.
+    /// For brew tasks, we intentionally collapse Homebrew's internal Ruby wrapper command line into `brew ...`.
+    public var displayCommandLine: String {
+        Self.displayCommand(kind: kind, commandLine: commandLine)
+    }
+
     public var projectName: String? {
         guard let workingDirectory, !workingDirectory.isEmpty else { return nil }
         let url = URL(fileURLWithPath: workingDirectory)
@@ -73,6 +79,38 @@ public struct ObservedTask: Identifiable, Codable, Sendable, Equatable {
             .replacingOccurrences(of: "/opt/homebrew/bin/", with: "")
             .replacingOccurrences(of: "/usr/local/bin/", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func displayCommand(kind: TaskKind, commandLine: String) -> String {
+        let trimmed = commandLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        switch kind {
+        case .brew:
+            // Homebrew often runs as:
+            // - /path/to/Homebrew/brew <subcommand> ...
+            // - /path/to/portable-ruby/.../ruby /path/to/Homebrew/brew.rb <subcommand> ...
+            // We want to display: brew <subcommand> ...
+            let tokens = trimmed.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            guard !tokens.isEmpty else { return trimmed }
+
+            func isBrewEntrypoint(_ t: String) -> Bool {
+                if t == "brew" || t == "brew.rb" { return true }
+                let last = (t as NSString).lastPathComponent
+                return last == "brew" || last == "brew.rb"
+            }
+
+            if let idx = tokens.lastIndex(where: isBrewEntrypoint) {
+                let rest = tokens.dropFirst(idx + 1).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                return rest.isEmpty ? "brew" : "brew \(rest)"
+            }
+
+            // Fallback: at least strip common path noise.
+            return canonicalCommand(trimmed)
+
+        case .claudeCode, .npmRun, .pnpmRun, .yarnRun:
+            return trimmed
+        }
     }
 
     private static func normalizedWorkingDirectory(_ workingDirectory: String?) -> String {

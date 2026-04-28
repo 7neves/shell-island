@@ -16,6 +16,21 @@ struct PixelNumberView: View {
     }
 }
 
+struct PixelTinyNumberView: View {
+    let number: Int
+    let color: Color
+
+    var body: some View {
+        let digits = Array(String(max(0, min(number, 99))))
+
+        HStack(spacing: 2) {
+            ForEach(Array(digits.enumerated()), id: \.offset) { _, digit in
+                PixelDigitView(digit: digit, color: color, pixelSize: 1.25, spacing: 0.45)
+            }
+        }
+    }
+}
+
 private struct PixelDigitView: View {
     let digit: Character
     let color: Color

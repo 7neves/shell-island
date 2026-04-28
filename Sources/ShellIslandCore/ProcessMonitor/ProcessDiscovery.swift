@@ -31,7 +31,7 @@ struct RunningProcess: Sendable, Equatable {
     let command: String
 }
 
-/// 进程发现器：扫描 kitty 进程树中运行的 brew/codex/npm run 任务
+/// 进程发现器：扫描 kitty 进程树中运行的 brew/claude/npm run 任务
 public struct ProcessDiscovery: Sendable {
     let commandRunner: ShellCommandRunner
     let lsofRunner: ShellCommandRunner
@@ -107,7 +107,7 @@ public struct ProcessDiscovery: Sendable {
 
     /// 判断命令是否匹配已知任务类型
     func matchTaskKind(command: String) -> TaskKind? {
-        for kind in [TaskKind.brew, .codex, .npmRun] {
+        for kind in [TaskKind.brew, .claudeCode, .npmRun, .pnpmRun, .yarnRun] {
             if kind.matches(command: command) { return kind }
         }
         return nil

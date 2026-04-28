@@ -5,6 +5,8 @@ import ShellIslandCore
 @MainActor
 final class OverlayPanelController {
     private static let expandedScaleFactor: CGFloat = 1.5
+    private static let collapsedActiveScaleFactor: CGFloat = 1.3
+    private static let collapsedIdleScaleFactor: CGFloat = 1.0
     private static let baseExpandedWidth: CGFloat = 420
     private static let baseExpandedMinHeight: CGFloat = 320
 
@@ -19,6 +21,7 @@ final class OverlayPanelController {
             panel,
             preferredScreenID: preferredScreenID,
             expanded: false,
+            collapsedHasTasks: model.runningCount > 0,
             animated: false
         )
         panel.orderFrontRegardless()
@@ -33,6 +36,7 @@ final class OverlayPanelController {
             panel,
             preferredScreenID: preferredScreenID,
             expanded: true,
+            collapsedHasTasks: true,
             animated: true
         )
         panel.makeKeyAndOrderFront(nil)
@@ -40,19 +44,24 @@ final class OverlayPanelController {
         isVisible = true
     }
 
-    func hide() {
+    func hide(hasTasks: Bool) {
         if let panel {
-            positionPanel(panel, preferredScreenID: nil, expanded: false, animated: true)
+            positionPanel(panel, preferredScreenID: nil, expanded: false, collapsedHasTasks: hasTasks, animated: true)
             panel.orderFrontRegardless()
         }
         isVisible = false
+    }
+
+    func updateCollapsed(hasTasks: Bool, preferredScreenID: String?) {
+        guard let panel, !isVisible else { return }
+        positionPanel(panel, preferredScreenID: preferredScreenID, expanded: false, collapsedHasTasks: hasTasks, animated: true)
     }
 
     // MARK: - Panel Creation
 
     private func makePanel(model: AppModel) -> NotchPanel {
         let screen = resolveTargetScreen() ?? NSScreen.main
-        let windowFrame = screen.map { panelFrame(on: $0, expanded: false) } ?? .zero
+        let windowFrame = screen.map { panelFrame(on: $0, expanded: false, collapsedHasTasks: model.runningCount > 0) } ?? .zero
 
         let panel = NotchPanel(
             contentRect: windowFrame,
@@ -87,11 +96,12 @@ final class OverlayPanelController {
         _ panel: NSPanel,
         preferredScreenID: String?,
         expanded: Bool,
+        collapsedHasTasks: Bool,
         animated: Bool
     ) {
         guard let screen = resolveTargetScreen(preferredScreenID: preferredScreenID) else { return }
         panel.level = expanded ? .statusBar : .popUpMenu
-        let windowFrame = panelFrame(on: screen, expanded: expanded)
+        let windowFrame = panelFrame(on: screen, expanded: expanded, collapsedHasTasks: collapsedHasTasks)
         if panel.frame != windowFrame {
             panel.setFrame(windowFrame, display: true, animate: animated)
         }
@@ -122,7 +132,7 @@ final class OverlayPanelController {
     }
 
     /// 面板尺寸：收起态使用胶囊实际尺寸，展开态放大到原先设计的 1.5 倍。
-    private func panelFrame(on screen: NSScreen, expanded: Bool) -> NSRect {
+    private func panelFrame(on screen: NSScreen, expanded: Bool, collapsedHasTasks: Bool) -> NSRect {
         let notchSize = screen.notchSize
         let width: CGFloat
         let height: CGFloat
@@ -131,7 +141,7 @@ final class OverlayPanelController {
             width = Self.baseExpandedWidth * Self.expandedScaleFactor
             height = notchSize.height + (Self.baseExpandedMinHeight * Self.expandedScaleFactor)
         } else {
-            width = notchSize.width * 1.3
+            width = notchSize.width * (collapsedHasTasks ? Self.collapsedActiveScaleFactor : Self.collapsedIdleScaleFactor)
             height = screen.islandClosedHeight
         }
 

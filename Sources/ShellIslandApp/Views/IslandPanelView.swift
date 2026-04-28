@@ -8,17 +8,16 @@ struct IslandPanelView: View {
     @ObservedObject var model: AppModel
     @State private var showsSettingsPanel = false
 
-    private var completedCount: Int {
-        model.taskState.tasks.filter(\.status.isCompleted).count
-    }
-
     private var primaryRunningTaskKind: TaskKind? {
         model.taskState.runningTasks.first?.kind
     }
 
     /// 收起态总宽度：始终为刘海宽度的1.3倍
     private var closedTotalWidth: CGFloat {
-        closedNotchWidth * 1.3
+        // Two collapsed modes:
+        // - idle: shrink width + hide side indicators
+        // - active: keep classic "normal" collapsed width
+        closedNotchWidth * (model.runningCount > 0 ? 1.3 : 1.0)
     }
 
     /// 左右各侧扩展宽度
@@ -88,10 +87,23 @@ struct IslandPanelView: View {
             VStack(spacing: 0) {
                 // 收起态/展开态共享的 header 区域（高度 = 刘海高度）
                 if model.isExpanded {
-                    openedHeader
+                    OpenedHeaderView(
+                        onCollapse: { model.hideOverlay() },
+                        onToggleSettings: {
+                            withAnimation(.smooth(duration: 0.22)) {
+                                showsSettingsPanel.toggle()
+                            }
+                        }
+                    )
                         .frame(height: closedNotchHeight)
                 } else {
-                    closedHeader
+                    CollapsedHeaderView(
+                        closedNotchWidth: closedNotchWidth,
+                        sideExpansionWidth: sideExpansionWidth,
+                        closedNotchHeight: closedNotchHeight,
+                        runningCount: model.runningCount,
+                        indicator: model.collapsedStatusIndicator
+                    )
                         .frame(height: closedNotchHeight)
                 }
 
@@ -128,88 +140,6 @@ struct IslandPanelView: View {
                 model.showOverlay()
             }
         }
-    }
-
-    // MARK: - Collapsed Header
-
-    private var closedHeader: some View {
-        HStack(spacing: 0) {
-            // 左侧：任务状态图标
-            pixelStatusAnimation
-                .frame(width: sideExpansionWidth)
-                .padding(.leading, 4)
-                .padding(.vertical, 2)
-
-            // 中间：刘海宽度占位（居中）
-            Rectangle()
-                .fill(Color.black)
-                .frame(width: closedNotchWidth - NotchShape.closedTopRadius)
-
-            // 右侧：任务数量
-            PixelNumberView(number: model.runningCount, color: pixelAccentColor)
-                .frame(width: sideExpansionWidth)
-                .padding(.trailing, 4)
-                .padding(.vertical, 2)
-        }
-        .frame(height: closedNotchHeight)
-    }
-
-    private var pixelAccentColor: Color {
-        guard model.runningCount > 0 else { return Color.white.opacity(0.55) }
-
-        switch primaryRunningTaskKind {
-        case .brew:
-            return Color(red: 0.98, green: 0.78, blue: 0.25)
-        case .codex:
-            return Color(red: 0.95, green: 0.48, blue: 0.22)
-        case .npmRun:
-            return Color(red: 0.34, green: 0.83, blue: 0.43)
-        case .none:
-            return .blue
-        }
-    }
-
-    private var pixelStatusAnimation: some View {
-        PixelTaskAnimationView(
-            kind: primaryRunningTaskKind,
-            isActive: model.runningCount > 0,
-            color: pixelAccentColor
-        )
-    }
-
-    // MARK: - Opened Header
-
-    private var openedHeader: some View {
-        HStack(spacing: 12) {
-            Button(action: { model.hideOverlay() }) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-
-            Spacer()
-
-            Button {
-                withAnimation(.smooth(duration: 0.22)) {
-                    showsSettingsPanel.toggle()
-                }
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-        }
-        .padding(.horizontal, 14)
     }
 
     // MARK: - Expanded Content

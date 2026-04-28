@@ -89,9 +89,28 @@ final class ProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(discovery.matchTaskKind(command: "brew install ffmpeg"), .brew)
         XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/bin/brew install git"), .brew)
-        XCTAssertEqual(discovery.matchTaskKind(command: "codex fix bug"), .codex)
+        XCTAssertEqual(discovery.matchTaskKind(command: "claude"), .claudeCode)
+        XCTAssertEqual(discovery.matchTaskKind(command: "claude --help"), .claudeCode)
+        XCTAssertEqual(discovery.matchTaskKind(command: "/usr/local/bin/claude"), .claudeCode)
         XCTAssertEqual(discovery.matchTaskKind(command: "npm run build"), .npmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "pnpm run dev"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "pnpm dev"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "pnpm start"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/bin/pnpm run dev"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "/usr/local/bin/pnpm start"), .pnpmRun)
+        // pnpm 以 node wrapper 形式运行（真实场景）
+        XCTAssertEqual(discovery.matchTaskKind(command: "node /Users/seven/Library/pnpm/global/5/node_modules/pnpm/bin/pnpm.cjs run dev"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "node /usr/local/lib/node_modules/pnpm/bin/pnpm.cjs start"), .pnpmRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "yarn run build"), .yarnRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "yarn dev"), .yarnRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "yarn start"), .yarnRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/bin/yarn run dev"), .yarnRun)
+        XCTAssertEqual(discovery.matchTaskKind(command: "/usr/local/bin/yarn start"), .yarnRun)
+        // yarn 以 node wrapper 形式运行
+        XCTAssertEqual(discovery.matchTaskKind(command: "node /usr/local/lib/node_modules/yarn/bin/yarn.js run dev"), .yarnRun)
         XCTAssertNil(discovery.matchTaskKind(command: "npm install"))
+        XCTAssertNil(discovery.matchTaskKind(command: "yarn add lodash"))
+        XCTAssertNil(discovery.matchTaskKind(command: "pnpm install"))
         XCTAssertNil(discovery.matchTaskKind(command: "git status"))
         XCTAssertNil(discovery.matchTaskKind(command: "/bin/zsh"))
     }
@@ -164,8 +183,8 @@ final class ProcessDiscoveryTests: XCTestCase {
             1     0 ??      01:00:00 /sbin/launchd
             100   1 ??       00:10:00 /Applications/kitty.app/Contents/MacOS/kitty
             200 100 ttys000  00:05:00 /bin/zsh
-            300 200 ttys000  00:01:00 codex --dangerously-skip-permissions
-            301 300 ttys000  00:00:58 codex --dangerously-skip-permissions
+            300 200 ttys000  00:01:00 claude
+            301 300 ttys000  00:00:58 claude
             """
         let runner = ShellCommandRunner(runner: { path, _ in
             if path == "/bin/ps" { return psOutput }
@@ -177,7 +196,7 @@ final class ProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(snapshots.count, 1)
         XCTAssertEqual(snapshots.first?.pid, 300)
-        XCTAssertEqual(snapshots.first?.kind, .codex)
+        XCTAssertEqual(snapshots.first?.kind, .claudeCode)
     }
 
     func testDeduplicatedSnapshotsCollapsesEquivalentCommandOnSameTTY() {

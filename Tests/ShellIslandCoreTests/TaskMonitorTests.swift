@@ -46,6 +46,53 @@ final class TaskMonitorTests: XCTestCase {
         XCTAssertEqual(completed.first?.kind, .brew)
     }
 
+    func testBrewInstallFailureInKittyOutputMarksTaskFailed() {
+        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+
+        let failingText = """
+        ==> Fetching downloads for: mole
+        Error: Failed to download resource "mole (1.36.1)"
+        Download failed: https://github.com/tw93/Mole/archive/refs/tags/V1.36.1.tar.gz
+        curl: (56) The requested URL returned error: 404
+        """
+
+        let detailedRunner: DetailedCommandRunner = { _, args, _ in
+            if args.contains("get-text") {
+                return CommandOutput(stdout: failingText, stderr: "", exitCode: 0, timedOut: false)
+            }
+            return CommandOutput(stdout: "", stderr: "", exitCode: 0, timedOut: false)
+        }
+
+        let kitty = KittyIntegration(commandRunner: ShellCommandRunner(detailedRunner: detailedRunner, timeout: 0.2))
+        let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
+        monitor.setupState.kittyRemoteControlReady = true
+
+        let snapshots = [
+            ProcessSnapshot(pid: 300, ppid: 200, tty: "/dev/ttys000",
+                            command: "brew install mole", workingDirectory: nil, kind: .brew),
+        ]
+
+        let windows = [
+            KittyWindow(id: 1, tabs: [
+                KittyTab(id: 10, title: "Work", windows: [
+                    KittyTabWindow(id: 100, title: "zsh", pid: 200, cwd: nil,
+                                   env: ["KITTY_WINDOW_TTY": "/dev/ttys000"]),
+                ]),
+            ]),
+        ]
+
+        // Discover task + attach sessionRef
+        monitor.applySnapshot(snapshots, windows: [("unix:/tmp/test-kitty", windows)])
+        XCTAssertEqual(monitor.taskState.runningCount, 1)
+
+        // Process disappears -> infer failure from kitty output
+        monitor.applySnapshot([], windows: [("unix:/tmp/test-kitty", windows)])
+
+        let task = monitor.taskState.tasks.first(where: { $0.kind == .brew })
+        XCTAssertEqual(task?.status, .failed)
+        XCTAssertEqual(task?.exitCode, 1)
+    }
+
     // MARK: - sessionRef 关联
 
     func testApplySnapshotUpdatesSessionRef() {
@@ -90,7 +137,7 @@ final class TaskMonitorTests: XCTestCase {
             ProcessSnapshot(pid: 400, ppid: 200, tty: "/dev/ttys000",
                             command: "npm run dev", workingDirectory: nil, kind: .npmRun),
             ProcessSnapshot(pid: 500, ppid: 200, tty: "/dev/ttys001",
-                            command: "codex fix bug", workingDirectory: nil, kind: .codex),
+                            command: "claude", workingDirectory: nil, kind: .claudeCode),
         ]
 
         monitor.applySnapshot(snapshots, windows: [])
@@ -98,7 +145,7 @@ final class TaskMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.taskState.runningCount, 3)
         XCTAssertEqual(monitor.taskState.tasks.filter { $0.kind == .brew }.count, 1)
         XCTAssertEqual(monitor.taskState.tasks.filter { $0.kind == .npmRun }.count, 1)
-        XCTAssertEqual(monitor.taskState.tasks.filter { $0.kind == .codex }.count, 1)
+        XCTAssertEqual(monitor.taskState.tasks.filter { $0.kind == .claudeCode }.count, 1)
     }
 
     // MARK: - 部分任务消失
@@ -148,6 +195,60 @@ final class TaskMonitorTests: XCTestCase {
 
         monitor.clearCompletedTasks()
         XCTAssertEqual(monitor.taskState.tasks.count, 0)
+    }
+
+    func testRerunNodeTaskSendsTextToOriginalKittyTab() async {
+        let discovery = ProcessDiscovery(commandRunner: ShellCommandRunner(runner: { _, _ in "" }))
+
+        final class Recorder: @unchecked Sendable {
+            let lock = NSLock()
+            var args: [String] = []
+            func set(_ v: [String]) { lock.lock(); args = v; lock.unlock() }
+            func get() -> [String] { lock.lock(); defer { lock.unlock() }; return args }
+        }
+
+        let recorder = Recorder()
+
+        let detailedRunner: DetailedCommandRunner = { _, args, _ in
+            recorder.set(args)
+            return CommandOutput(stdout: "", stderr: "", exitCode: 0, timedOut: false)
+        }
+
+        let kitty = KittyIntegration(commandRunner: ShellCommandRunner(detailedRunner: detailedRunner, timeout: 0.2))
+        let monitor = TaskMonitor(processDiscovery: discovery, kittyIntegration: kitty)
+        monitor.setupState.kittyRemoteControlReady = true
+
+        let windows = [
+            KittyWindow(id: 1, tabs: [
+                KittyTab(id: 10, title: "Work", windows: [
+                    KittyTabWindow(id: 100, title: "zsh", pid: 200, cwd: nil,
+                                   env: ["KITTY_WINDOW_TTY": "/dev/ttys000"]),
+                ]),
+            ]),
+        ]
+
+        let snapshots = [
+            ProcessSnapshot(pid: 400, ppid: 200, tty: "/dev/ttys000",
+                            command: "pnpm dev", workingDirectory: "/Users/seven/Projects/demo", kind: .pnpmRun),
+        ]
+
+        // Discover + attach sessionRef
+        monitor.applySnapshot(snapshots, windows: [("unix:/tmp/test-kitty", windows)])
+        monitor.applySnapshot([], windows: [("unix:/tmp/test-kitty", windows)])
+
+        guard let task = monitor.taskState.tasks.first(where: { $0.kind == .pnpmRun }) else {
+            XCTFail("Expected pnpm task")
+            return
+        }
+
+        monitor.rerun(task: task)
+        try? await Task.sleep(nanoseconds: 80_000_000) // give detached task a moment
+
+        let calledArgs = recorder.get().joined(separator: " ")
+        XCTAssertTrue(calledArgs.contains("send-text"))
+        XCTAssertTrue(calledArgs.contains("id:100"))
+        XCTAssertTrue(calledArgs.contains("cd"))
+        XCTAssertTrue(calledArgs.contains("pnpm dev"))
     }
 
     // MARK: - 重复发现不创建重复任务

@@ -21,9 +21,13 @@ struct PixelTaskAnimationView: View {
         switch kind {
         case .brew:
             return Self.brewFrames
-        case .codex:
-            return Self.codexFrames
+        case .claudeCode:
+            return Self.claudeCodeFrames
         case .npmRun:
+            return Self.npmFrames
+        case .pnpmRun:
+            return Self.npmFrames
+        case .yarnRun:
             return Self.npmFrames
         case .none:
             return isActive ? Self.idleActiveFrames : Self.idleFrames
@@ -32,7 +36,7 @@ struct PixelTaskAnimationView: View {
 
     private static let idleFrames: [[String]] = [
         [
-            // Geek idle: terminal prompt `>_` (cursor on)
+            // Geek idle (stable): `>_` prompt, cursor on
             "00000000",
             "00000000",
             "00100000",
@@ -43,18 +47,7 @@ struct PixelTaskAnimationView: View {
             "00000000"
         ],
         [
-            // cursor off
-            "00000000",
-            "00000000",
-            "00100000",
-            "00010000",
-            "00100000",
-            "00000000",
-            "00000000",
-            "00000000"
-        ],
-        [
-            // subtle scanline
+            // cursor on (hold)
             "00000000",
             "00000000",
             "00100000",
@@ -65,7 +58,18 @@ struct PixelTaskAnimationView: View {
             "00000000"
         ],
         [
-            // scanline shifts down
+            // cursor on (hold)
+            "00000000",
+            "00000000",
+            "00100000",
+            "00010000",
+            "00100000",
+            "00000000",
+            "00111000",
+            "00000000"
+        ],
+        [
+            // cursor off (blink)
             "00000000",
             "00000000",
             "00100000",
@@ -73,7 +77,7 @@ struct PixelTaskAnimationView: View {
             "00100000",
             "00000000",
             "00000000",
-            "00111000"
+            "00000000"
         ]
     ]
 
@@ -100,26 +104,28 @@ struct PixelTaskAnimationView: View {
         ]
     ]
 
-    private static let codexFrames: [[String]] = [
+    private static let claudeCodeFrames: [[String]] = [
         [
-            "00100100",
-            "01111110",
-            "11011011",
-            "11111111",
-            "01111110",
-            "00100100",
-            "01000010",
-            "10000001"
+            // Diamond expanding: outer ring
+            "00010000",
+            "00101000",
+            "01000100",
+            "10000010",
+            "01000100",
+            "00101000",
+            "00010000",
+            "00000000"
         ],
         [
-            "01000010",
-            "00111100",
-            "11011011",
-            "11111111",
-            "01111110",
-            "00100100",
-            "10000001",
-            "01000010"
+            // Diamond contracting: inner ring
+            "00000000",
+            "00010000",
+            "00101000",
+            "01000100",
+            "00101000",
+            "00010000",
+            "00000000",
+            "00000000"
         ]
     ]
 
