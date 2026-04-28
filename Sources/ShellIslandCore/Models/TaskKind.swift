@@ -28,7 +28,13 @@ public enum TaskKind: String, Codable, Sendable {
         let executable = executableName(of: command)
         switch self {
         case .brew:
-            return executable == "brew"
+            if executable == "brew" { return true }
+            // Homebrew 是 Ruby 应用，实际进程名是 ruby
+            // 例：ruby ... /Library/Homebrew/brew.rb install formula
+            if executable == "ruby", command.contains("/brew.rb") {
+                return true
+            }
+            return false
         case .claudeCode:
             return executable == "claude"
         case .npmRun:

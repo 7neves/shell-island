@@ -81,6 +81,9 @@ final class ProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(discovery.matchTaskKind(command: "brew install ffmpeg"), .brew)
         XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/bin/brew install git"), .brew)
+        // brew 实际以 ruby 进程运行（Homebrew 是 Ruby 应用）
+        XCTAssertEqual(discovery.matchTaskKind(command: "/opt/homebrew/Library/Homebrew/vendor/portable-ruby/current/bin/ruby -W1 -- /opt/homebrew/Library/Homebrew/brew.rb install mole"), .brew)
+        XCTAssertEqual(discovery.matchTaskKind(command: "ruby /usr/local/Homebrew/brew.rb install git"), .brew)
         XCTAssertEqual(discovery.matchTaskKind(command: "claude"), .claudeCode)
         XCTAssertEqual(discovery.matchTaskKind(command: "claude --help"), .claudeCode)
         XCTAssertEqual(discovery.matchTaskKind(command: "/usr/local/bin/claude"), .claudeCode)
