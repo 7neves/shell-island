@@ -350,13 +350,17 @@ public struct KittyIntegration: Sendable {
     }
 
     private func resolvedSocketCandidates() -> [String] {
-        // 1) Explicit env socket first
-        if let socketAddress, !socketAddress.isEmpty {
-            return [socketAddress]
-        }
-        // 2) Probe common /tmp sockets (including pid suffix)
+        // 总是探测 /tmp 下所有可用 kitty socket，而不只依赖 KITTY_LISTEN_ON
+        // （用户可能同时打开了主 kitty 和 quick-access 终端，每个有独立的 socket）
         if NSClassFromString("XCTestCase") != nil {
             return []
+        }
+
+        var candidates: [String] = []
+
+        // 优先添加 KITTY_LISTEN_ON 指定的 socket（如果有）
+        if let socketAddress, !socketAddress.isEmpty {
+            candidates.append(socketAddress)
         }
 
         let basePaths = [
@@ -365,12 +369,10 @@ public struct KittyIntegration: Sendable {
             "/tmp/kitty"
         ]
 
-        var candidates: [String] = []
         for base in basePaths {
             candidates.append(contentsOf: existingSocketPaths(forBasePath: base).map { "unix:\($0)" })
         }
 
-        // Ensure uniqueness while keeping order.
         var seen = Set<String>()
         return candidates.filter { seen.insert($0).inserted }
     }

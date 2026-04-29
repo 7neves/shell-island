@@ -138,14 +138,31 @@ private func getProcessCommandLine(_ pid: Int32) -> String {
     var parts: [String] = []
     var offset = MemoryLayout<Int32>.size
 
+    // KERN_PROCARGS2 格式：exec_path\0[可能有 padding 空字节]argv[0]\0argv[1]\0...\0 环境变量
+    // 1) 跳过 exec path（第一个空终止字符串）
+    if let nullPos = buffer.suffix(from: offset).firstIndex(of: 0) {
+        offset = nullPos + 1
+    }
+
+    // 2) 跳过 exec path 和 argv[0] 之间的 padding 空字节
+    while offset < bufferSize {
+        let remaining = buffer.suffix(from: offset)
+        guard let nullPos = remaining.firstIndex(of: 0) else { break }
+        if nullPos > offset { break }  // 非空字符串 → 到达 argv[0]
+        offset = nullPos + 1
+    }
+
+    // 3) 读取 argc 个 argv 条目
     for _ in 0..<min(Int(argc), 100) {
         guard offset < bufferSize else { break }
         let remaining = buffer.suffix(from: offset)
         guard let nullPos = remaining.firstIndex(of: 0) else { break }
 
-        let segBytes = buffer[offset..<nullPos].map { UInt8(bitPattern: $0) }
-        if let str = String(bytes: segBytes, encoding: .utf8), !str.isEmpty {
-            parts.append(str)
+        if nullPos > offset {
+            let segBytes = buffer[offset..<nullPos].map { UInt8(bitPattern: $0) }
+            if let str = String(bytes: segBytes, encoding: .utf8) {
+                parts.append(str)
+            }
         }
         offset = nullPos + 1
     }
