@@ -25,6 +25,12 @@ public enum AttentionDetector: Sendable {
 
     private static let tailLineCount = 40
 
+    private static let numberedPattern = try! NSRegularExpression(pattern: #"^\s*\d+[\.\)]\s+(\S+)"#)
+    private static let buttonWords: Set<String> = [
+        "allow", "deny", "approve", "reject",
+        "yes", "no", "skip", "cancel", "accept",
+    ]
+
     private static func claudeCodeNeedsUserInput(_ text: String) -> Bool {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let tail = lines.suffix(tailLineCount)
@@ -39,12 +45,6 @@ public enum AttentionDetector: Sendable {
         let candidates = tail.suffix(20).map { String($0) }
 
         // 模式 1：编号选择列表（如 Claude Code 的 "❯ 1. Yes / 2. No"）
-        // 要求数字后的词是按钮词，避免误匹配 Claude 对话中的普通编号输出
-        let numberedPattern = try! NSRegularExpression(pattern: #"^\s*\d+[\.\)]\s+(\S+)"#)
-        let buttonWords: Set<String> = [
-            "allow", "deny", "approve", "reject",
-            "yes", "no", "skip", "cancel", "accept",
-        ]
         let numberedCount = candidates.filter { line in
             let nsLine = line as NSString
             guard let m = numberedPattern.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) else {

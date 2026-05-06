@@ -18,7 +18,7 @@ struct CollapsedHeaderView: View {
             HStack(spacing: 0) {
                 statusIcon
                 .frame(width: sideExpansionWidth)
-                .padding(.leading, 4)
+                .padding(.leading, 8)
                 .padding(.vertical, 2)
 
                 Rectangle()
@@ -38,7 +38,7 @@ struct CollapsedHeaderView: View {
     private var statusIcon: some View {
         switch indicator {
         case .running:
-            RunningMatrixIcon(color: pixelAccentColor)
+            TetrisIcon(color: pixelAccentColor)
         case .failed:
             AlarmIcon(color: pixelAccentColor)
         case .attention:
@@ -66,30 +66,35 @@ struct CollapsedHeaderView: View {
     }
 }
 
-private struct RunningMatrixIcon: View {
+// MARK: - Tetris Icon
+
+/// 俄罗斯方块图标：每 1 秒切换，3×5 矩阵，pixelSize 略大于数字以补偿稀疏图案。
+private struct TetrisIcon: View {
     let color: Color
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.12)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            PixelMatrixView(pattern: buildPattern(t: t), color: color, pixelSize: 1.96, spacing: 0.8)
+            let index = Int(t / 1.0) % TetrisPiece.all.count
+            PixelMatrixView(pattern: TetrisPiece.all[index].pattern, color: color, pixelSize: 2.8, spacing: 1.0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+}
 
-    /// 3列矩阵雨：每列独立速度，2个连续像素点自上而下滚动
-    private func buildPattern(t: Double) -> [String] {
-        // 每列的滚动速度（行/秒）和初始相位偏移（行）
-        let speeds: [Double] = [2.5, 3.8, 1.9]
-        let offsets: [Double] = [0.0, 2.6, 5.1]
+/// 7 种方块，每块 3×5 矩阵，像素点独立定制。
+private struct TetrisPiece {
+    let pattern: [String]
 
-        var grid = [[Character]](repeating: [Character](repeating: "0", count: 3), count: 8)
-        for col in 0..<3 {
-            let head = Int(t * speeds[col] + offsets[col]) % 8
-            grid[head][col] = "1"
-            grid[(head + 1) % 8][col] = "1"
-        }
-        return grid.map { String($0) }
-    }
+    static let all: [TetrisPiece] = [.o, .i, .t, .s, .z, .j, .l]
+
+    static let o = TetrisPiece(pattern: ["111", "111", "111", "000", "000"]) // 9px
+    static let i = TetrisPiece(pattern: ["000", "000", "111", "000", "000"]) // 3px 单行横条
+    static let t = TetrisPiece(pattern: ["000", "111", "010", "010", "000"]) // 5px
+    static let s = TetrisPiece(pattern: ["000", "011", "110", "000", "000"]) // 4px
+    static let z = TetrisPiece(pattern: ["000", "110", "011", "000", "000"]) // 4px
+    static let j = TetrisPiece(pattern: ["100", "111", "000", "000", "000"]) // 4px
+    static let l = TetrisPiece(pattern: ["001", "111", "000", "000", "000"]) // 4px
 }
 
 private struct AlarmIcon: View {
