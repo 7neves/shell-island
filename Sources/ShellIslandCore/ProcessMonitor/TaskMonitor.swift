@@ -193,24 +193,11 @@ public final class TaskMonitor: ObservableObject {
                 socket: ref.kittySocketAddress
             ) else { continue }
 
-            if textNeedsUserInput(text) {
+            if AttentionDetector.needsUserInput(text: text, kind: task.kind) {
                 result.insert(task.id)
             }
         }
         return result
-    }
-
-    private func textNeedsUserInput(_ text: String) -> Bool {
-        let t = text.lowercased()
-        // Password / sudo
-        if t.contains("[sudo] password") { return true }
-        if t.contains("password:") { return true }
-        if t.contains("enter passphrase") { return true }
-        // Common confirmations
-        if t.contains("press enter") { return true }
-        if t.contains("(y/n)") || t.contains("[y/n]") { return true }
-        if t.contains("are you sure you want to continue") { return true }
-        return false
     }
 
     public func terminateTask(id: String) {

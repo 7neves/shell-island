@@ -243,7 +243,7 @@ public struct KittyIntegration: Sendable {
     public func getText(leafWindowId: Int, socket: String?) -> String? {
         guard leafWindowId != 0 else { return nil }
         let args = kittyArgs(
-            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "screen", "--ansi", "false"],
+            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "screen"],
             overrideSocket: socket
         )
         guard let result = commandRunner.runDetailed(kittyExecutable, args),
@@ -259,7 +259,7 @@ public struct KittyIntegration: Sendable {
     public func getTextAll(leafWindowId: Int, socket: String?) -> String? {
         guard leafWindowId != 0 else { return nil }
         let args = kittyArgs(
-            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "all", "--ansi", "false"],
+            ["@", "get-text", "--match", "id:\(leafWindowId)", "--extent", "all"],
             overrideSocket: socket
         )
         guard let result = commandRunner.runDetailed(kittyExecutable, args),
