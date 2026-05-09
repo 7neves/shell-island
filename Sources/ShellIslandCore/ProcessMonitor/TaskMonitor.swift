@@ -7,15 +7,35 @@ public final class TaskMonitor: ObservableObject {
     @Published public var taskState = TaskState()
     @Published public var preferences = AppPreferences()
     @Published public var setupState = SetupState()
-    @Published public var attentionTaskIDs = Set<String>()
+    @Published public var attentionTaskInfos: [String: AttentionType] = [:]
+
+    /// 向后兼容：返回需要关注的任务 ID 集合
+    public var attentionTaskIDs: Set<String> {
+        Set(attentionTaskInfos.keys)
+    }
+
+    /// 已被 hook 接管的 task ID 集合。
+    /// 在此集合中的 Claude Code 任务不再使用终端文本扫描（避免 false positive），
+    /// attention 完全由 Hook 推送。
+    public var hookManagedTaskIDs: Set<String> = []
+
+    /// 通过 TTY 查找匹配的任务 ID（供 BridgeServer 使用）
+    public func findTaskID(byTTY tty: String?) -> String? {
+        guard let tty, !tty.isEmpty else { return nil }
+        // 优先匹配 running 任务，其次匹配所有任务
+        if let task = taskState.runningTasks.first(where: { $0.tty == tty }) {
+            return task.id
+        }
+        return taskState.tasks.first(where: { $0.tty == tty })?.id
+    }
 
     private static let idlePollIntervalSeconds: Double = 2.0
     private static let sigintGraceSeconds: Double = 0.8
     private var pollTimer: Timer?
     private var currentPollIntervalSeconds: Double?
-    private let processDiscovery: ProcessDiscovery
-    private let kittyIntegration: KittyIntegration
-    private let logger = ShellLogger(category: "TaskMonitor")
+    let processDiscovery: ProcessDiscovery
+    let kittyIntegration: KittyIntegration
+    let logger = ShellLogger(category: "TaskMonitor")
 
     public init(
         processDiscovery: ProcessDiscovery = ProcessDiscovery(),
@@ -113,7 +133,7 @@ public final class TaskMonitor: ObservableObject {
             }
         }
 
-        // 先更新 active 任务的 sessionRef，这样在“任务消失”时也能基于 kitty 输出推断失败。
+        // 先更新 active 任务的 sessionRef，这样在"任务消失"时也能基于 kitty 输出推断失败。
         if !windows.isEmpty {
             for task in taskState.tasks where task.status.isRunning || task.status.isTerminating {
                 if task.sessionRef == nil || task.sessionRef?.kittyLeafWindowId == 0 {
@@ -161,7 +181,7 @@ public final class TaskMonitor: ObservableObject {
         }
 
         // Best-effort: detect "waiting for input" prompts in kitty tabs.
-        attentionTaskIDs = detectAttentionTasks(windowsBySocket: windows)
+        attentionTaskInfos = detectAttentionTasks(windowsBySocket: windows)
     }
 
     private func findBestSessionRef(
@@ -180,21 +200,24 @@ public final class TaskMonitor: ObservableObject {
         return nil
     }
 
-    private func detectAttentionTasks(windowsBySocket: [(socket: String, windows: [KittyWindow])]) -> Set<String> {
-        guard setupState.kittyRemoteControlReady else { return [] }
+    private func detectAttentionTasks(windowsBySocket: [(socket: String, windows: [KittyWindow])]) -> [String: AttentionType] {
+        guard setupState.kittyRemoteControlReady else { return [:] }
 
-        var result = Set<String>()
+        var result: [String: AttentionType] = [:]
         for task in taskState.runningTasks {
             guard let ref = task.sessionRef else { continue }
             guard ref.kittyLeafWindowId != 0 else { continue }
+
+            // 已 hook 接管的 Claude Code 任务，不再终端扫描（避免 false positive）
+            if task.kind == .claudeCode, hookManagedTaskIDs.contains(task.id) { continue }
 
             guard let text = kittyIntegration.getText(
                 leafWindowId: Int(ref.kittyLeafWindowId),
                 socket: ref.kittySocketAddress
             ) else { continue }
 
-            if AttentionDetector.needsUserInput(text: text, kind: task.kind) {
-                result.insert(task.id)
+            if let type = AttentionDetector.detectType(text: text, kind: task.kind) {
+                result[task.id] = type
             }
         }
         return result
@@ -204,7 +227,7 @@ public final class TaskMonitor: ObservableObject {
         guard let task = taskState.task(id: id), task.status.isRunning else { return }
         let pid = task.pid
 
-        // UI 立即进入 stopping（避免“点了没反应”）
+        // UI 立即进入 stopping（避免"点了没反应"）
         apply(.taskStatusChanged(id, .terminating))
 
         // Prefer SIGINT (Ctrl-C) first for friendlier shutdown (e.g. node dev servers).
@@ -267,106 +290,43 @@ public final class TaskMonitor: ObservableObject {
             }
         }
     }
+
+    /// 向任务所在 kitty 窗口发送文本（用于 Attention Popup 操作）。
+    public func sendTextToTask(id: String, text: String) {
+        guard setupState.kittyRemoteControlReady else {
+            logger.warning("sendTextToTask: kitty remote control 未就绪")
+            return
+        }
+        guard let task = taskState.task(id: id),
+              let ref = task.sessionRef,
+              ref.kittyLeafWindowId != 0 else {
+            logger.warning("sendTextToTask: 任务无有效 sessionRef")
+            return
+        }
+
+        let leafId = Int(ref.kittyLeafWindowId)
+        let socket = ref.kittySocketAddress
+
+        Task.detached {
+            do {
+                try self.kittyIntegration.sendText(
+                    leafWindowId: leafId,
+                    socket: socket,
+                    text: text
+                )
+            } catch {
+                await MainActor.run {
+                    self.logger.error("sendTextToTask 失败: \(String(describing: error))")
+                }
+            }
+        }
+    }
 }
 
 private func shellEscapeSingleQuoted(_ raw: String) -> String {
     // POSIX-ish single-quote escaping: ' -> '\'' .
     let escaped = raw.replacingOccurrences(of: "'", with: "'\\''")
     return "'\(escaped)'"
-}
-
-private extension TaskMonitor {
-    func inferExitCodeIfPossible(for task: ObservedTask) -> Int32? {
-        guard task.kind == .brew else { return nil }
-        guard isBrewInstallCommand(task.commandLine) else { return nil }
-        return inferBrewInstallExitCode(task: task)
-    }
-
-    func isBrewInstallCommand(_ cmd: String) -> Bool {
-        let lower = cmd.lowercased()
-        return lower.contains("brew") && lower.contains("install")
-    }
-
-    func inferBrewInstallExitCode(task: ObservedTask) -> Int32? {
-        // Heuristic: Homebrew writes logs under ~/Library/Logs/Homebrew.
-        // If we find a log modified after the task started that contains "Error:",
-        // treat it as a failure.
-        //
-        // Some failures only show up in the terminal output (or the log file isn't discoverable),
-        // so we also try to inspect the kitty tab text when available.
-        // If we can't prove failure, return nil (keep existing behavior).
-        let fm = FileManager.default
-        let logsRoot = fm.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library")
-            .appendingPathComponent("Logs")
-            .appendingPathComponent("Homebrew")
-
-        let since = task.startedAt.addingTimeInterval(-2)
-
-        guard let enumerator = fm.enumerator(
-            at: logsRoot,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-
-        var newestURL: URL?
-        var newestDate: Date = since
-
-        for case let url as URL in enumerator {
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]) else { continue }
-            guard values.isRegularFile == true else { continue }
-            guard let m = values.contentModificationDate else { continue }
-            guard m >= since else { continue }
-            if m > newestDate {
-                newestDate = m
-                newestURL = url
-            }
-        }
-
-        if let logURL = newestURL,
-           let data = try? Data(contentsOf: logURL) {
-            let text = String(data: data.suffix(48_000), encoding: .utf8) ?? ""
-            if text.localizedCaseInsensitiveContains("Error:") || text.localizedCaseInsensitiveContains("ERROR:") {
-                logger.warning("推断 brew install 失败（log: \(logURL.lastPathComponent)）")
-                return 1
-            }
-        }
-
-        // Fallback: inspect recent kitty tab output (best-effort).
-        return inferBrewFailureFromKittyText(task: task)
-    }
-
-    func inferBrewFailureFromKittyText(task: ObservedTask) -> Int32? {
-        guard setupState.kittyRemoteControlReady else { return nil }
-        guard let ref = task.sessionRef else { return nil }
-        guard ref.kittyLeafWindowId != 0 else { return nil }
-
-        guard let raw = kittyIntegration.getTextAll(
-            leafWindowId: Int(ref.kittyLeafWindowId),
-            socket: ref.kittySocketAddress
-        ) else { return nil }
-
-        // Only inspect the tail to avoid scanning huge buffers.
-        let tail = String(raw.suffix(48_000))
-        let t = tail.lowercased()
-
-        // Homebrew / curl / download failures commonly include these markers.
-        let failureMarkers = [
-            "error:",
-            "failed to download",
-            "download failed",
-            "requested url returned error",
-            "curl:",
-            "fatal:",
-        ]
-
-        if failureMarkers.contains(where: { t.contains($0) }) {
-            logger.warning("推断 brew install 失败（kitty output）")
-            return 1
-        }
-
-        return nil
-    }
 }
 
 private extension String {

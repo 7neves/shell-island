@@ -11,9 +11,12 @@ cd "$repo_root"
 
 echo "• Building ShellIslandApp…"
 swift build -c debug --product ShellIslandApp
+echo "• Building ShellIslandHooks…"
+swift build -c debug --product ShellIslandHooks
 
 build_root="$(swift build -c debug --show-bin-path)"
 app_binary="$build_root/ShellIslandApp"
+hooks_binary="$build_root/ShellIslandHooks"
 
 # 停止旧实例
 osascript -e 'tell application "Shell Island Dev" to quit' 2>/dev/null || true
@@ -26,6 +29,13 @@ mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
 # 复制可执行文件
 command cp "$app_binary" "$bundle_binary"
 chmod +x "$bundle_binary"
+
+# 复制 ShellIslandHooks CLI 到 Application Support
+hooks_dest_dir="$HOME/Library/Application Support/ShellIsland"
+mkdir -p "$hooks_dest_dir"
+command cp "$hooks_binary" "$hooks_dest_dir/ShellIslandHooks"
+chmod +x "$hooks_dest_dir/ShellIslandHooks"
+echo "✓ ShellIslandHooks installed to $hooks_dest_dir"
 
 # 生成 Info.plist
 cat > "$plist_path" <<EOF
@@ -76,5 +86,6 @@ else
 fi
 
 codesign --force --deep --sign "$sign_identity" "$bundle_dir" 2>/dev/null || true
+codesign --force --sign "$sign_identity" "$hooks_dest_dir/ShellIslandHooks" 2>/dev/null || true
 
 echo "✓ Build complete: $bundle_dir"

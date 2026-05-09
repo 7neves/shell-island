@@ -16,6 +16,10 @@ let package = Package(
             name: "ShellIslandApp",
             targets: ["ShellIslandApp"]
         ),
+        .executable(
+            name: "ShellIslandHooks",
+            targets: ["ShellIslandHooks"]
+        ),
     ],
     targets: [
         .target(
@@ -24,6 +28,10 @@ let package = Package(
         .executableTarget(
             name: "ShellIslandApp",
             dependencies: ["ShellIslandCore"]
+        ),
+        .executableTarget(
+            name: "ShellIslandHooks",
+            dependencies: []
         ),
         .testTarget(
             name: "ShellIslandCoreTests",
