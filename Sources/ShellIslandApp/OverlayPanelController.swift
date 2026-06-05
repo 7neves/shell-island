@@ -10,9 +10,17 @@ final class OverlayPanelController {
     private static let baseExpandedWidth: CGFloat = 420
     private static let baseExpandedMinHeight: CGFloat = 320
 
+    private static let popupWidth: CGFloat = 360
+    private static let popupRowHeight: CGFloat = 80
+    private static let popupTitleHeight: CGFloat = 32
+    private static let popupGap: CGFloat = 8
+
     private var panel: NotchPanel?
+    private var popupPanel: NSPanel?
     private var eventMonitors = NotchEventMonitors()
     private(set) var isVisible: Bool = false
+
+    // MARK: - 主胶囊面板
 
     func ensurePanel(model: AppModel, preferredScreenID: String?) {
         let panel = self.panel ?? makePanel(model: model)
@@ -55,6 +63,77 @@ final class OverlayPanelController {
     func updateCollapsed(hasTasks: Bool, preferredScreenID: String?) {
         guard let panel, !isVisible else { return }
         positionPanel(panel, preferredScreenID: preferredScreenID, expanded: false, collapsedHasTasks: hasTasks, animated: true)
+    }
+
+    // MARK: - Attention Popup 面板
+
+    func showAttentionPopup(model: AppModel, items: [AttentionItem]) {
+        guard let capsulePanel = panel else { return }
+
+        let popup = makeOrReusePopupPanel()
+        popupPanel = popup
+
+        let hostingView = NSHostingView(rootView: AttentionPopupView(model: model, items: items))
+        popup.contentView = hostingView
+
+        let height = Self.popupTitleHeight + CGFloat(items.count) * Self.popupRowHeight
+        let popupFrame = popupFrame(on: capsulePanel, height: height)
+
+        popup.setFrame(popupFrame, display: true, animate: false)
+        popup.orderFrontRegardless()
+    }
+
+    func hideAttentionPopup() {
+        popupPanel?.orderOut(nil)
+        popupPanel = nil
+    }
+
+    func updateAttentionPopupContent(model: AppModel, items: [AttentionItem]) {
+        guard let popup = popupPanel else { return }
+        guard let capsulePanel = panel else { return }
+
+        let hostingView = NSHostingView(rootView: AttentionPopupView(model: model, items: items))
+        popup.contentView = hostingView
+
+        let height = Self.popupTitleHeight + CGFloat(items.count) * Self.popupRowHeight
+        let popupFrame = popupFrame(on: capsulePanel, height: height)
+        popup.setFrame(popupFrame, display: true, animate: false)
+    }
+
+    // MARK: - Popup Panel Creation
+
+    private func makeOrReusePopupPanel() -> NSPanel {
+        if let existing = popupPanel {
+            return existing
+        }
+
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.isMovable = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces, .ignoresCycle]
+        panel.ignoresMouseEvents = false
+
+        return panel
+    }
+
+    private func popupFrame(on capsulePanel: NSPanel, height: CGFloat) -> NSRect {
+        let capsuleFrame = capsulePanel.frame
+        return NSRect(
+            x: capsuleFrame.midX - Self.popupWidth / 2,
+            y: capsuleFrame.minY - Self.popupGap - height,
+            width: Self.popupWidth,
+            height: height
+        )
     }
 
     // MARK: - Panel Creation

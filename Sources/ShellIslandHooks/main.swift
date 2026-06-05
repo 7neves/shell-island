@@ -31,12 +31,58 @@ struct ClaudeHookPayload: Codable {
     let model: String?
     let source: String?
     let tool_name: String?
+    let tool_input: ClaudeHookJSONValue?
     let prompt: String?
     let terminal_tty: String?
     let permission_suggestions: [ClaudePermissionSuggestion]?
 
     var eventName: ClaudeHookEventName? {
         ClaudeHookEventName(rawValue: hook_event_name)
+    }
+}
+
+/// JSON 递归值类型（与 ShellIslandCore.ClaudeHookJSONValue 镜像）
+enum ClaudeHookJSONValue: Codable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case object([String: ClaudeHookJSONValue])
+    case array([ClaudeHookJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode([String: ClaudeHookJSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([ClaudeHookJSONValue].self) {
+            self = .array(value)
+        } else if container.decodeNil() {
+            self = .null
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let v): try container.encode(v)
+        case .int(let v): try container.encode(v)
+        case .double(let v): try container.encode(v)
+        case .bool(let v): try container.encode(v)
+        case .object(let v): try container.encode(v)
+        case .array(let v): try container.encode(v)
+        case .null: try container.encodeNil()
+        }
     }
 }
 
@@ -68,13 +114,21 @@ struct ClaudePermissionDecision: Codable {
 }
 
 struct HookOutput: Encodable {
-    let behavior: String
-    let reason: String?
+    let hookSpecificOutput: HookSpecificOutput
 
-    init(behavior: String, reason: String?) {
-        self.behavior = behavior
-        self.reason = reason
+    init(eventName: String, decision: String, reason: String?) {
+        self.hookSpecificOutput = HookSpecificOutput(
+            hookEventName: eventName,
+            permissionDecision: decision,
+            permissionDecisionReason: reason
+        )
     }
+}
+
+struct HookSpecificOutput: Encodable {
+    let hookEventName: String
+    let permissionDecision: String
+    let permissionDecisionReason: String?
 }
 
 /// Socket 路径（与 BridgeTransport 保持一致）
@@ -196,26 +250,25 @@ func main() {
         exit(0)  // fail-open
     }
 
-
     // 3. 判断超时
     let isPermissionRequest = payload.eventName == .permissionRequest
+    let eventName = payload.hook_event_name
     let timeout: TimeInterval = isPermissionRequest ? 86400 : 45
 
     // 4. 发送到 BridgeServer
     guard let response = sendViaSocket(payload: payload, timeout: timeout) else {
         // Bridge 不可用，fail-open
         if isPermissionRequest {
-            writeOutput(HookOutput(behavior: "allow", reason: "ShellIsland bridge unavailable, fail-open"))
+            writeOutput(HookOutput(eventName: eventName, decision: "allow", reason: "ShellIsland bridge unavailable, fail-open"))
         }
         exit(0)
     }
 
-    // 5. 写入 stdout
+    // 5. 写入 stdout（仅 PermissionRequest 需要输出，其他事件 exit 0 = continue）
     if isPermissionRequest, let decision = response.decision {
-        writeOutput(HookOutput(behavior: decision.behavior, reason: decision.reason))
-    } else {
-        writeOutput(HookOutput(behavior: "continue", reason: nil))
+        writeOutput(HookOutput(eventName: eventName, decision: decision.behavior, reason: decision.reason))
     }
+    // 非 PermissionRequest 事件：exit 0 即表示 continue，无需 stdout 输出
 }
 
 main()

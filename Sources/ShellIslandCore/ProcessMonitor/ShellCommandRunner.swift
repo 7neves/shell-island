@@ -125,6 +125,13 @@ public struct ShellCommandRunner: Sendable {
         stdoutBuffer.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
         stderrBuffer.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
 
+        // 确保子进程被操作系统 reaped，否则 dealloc 会抛 NSInvalidArgumentException
+        // waitUntilExit() 在进程已退出时立即返回
+        if process.isRunning {
+            process.terminate()
+        }
+        process.waitUntilExit()
+
         let stdoutData = stdoutBuffer.take()
         let stderrData = stderrBuffer.take()
 

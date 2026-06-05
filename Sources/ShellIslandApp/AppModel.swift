@@ -10,6 +10,8 @@ struct AttentionItem: Identifiable {
     let attentionType: AttentionType
     let hasSessionRef: Bool
     let task: ObservedTask
+    var hookToolName: String?     // 被请求的工具名（Bash/Write/WebFetch 等），供弹窗展示
+    var isHookManaged: Bool = false  // 是否已被 hook 接管（有活跃的 session mapping）
 }
 
 @MainActor
@@ -30,6 +32,9 @@ final class AppModel: ObservableObject {
     /// 用户已 Dismiss 的任务 ID 集合，只要该任务仍在 attentionTaskInfos 中就保持抑制。
     /// 当任务从 attentionTaskInfos 消失时自动清理，允许后续再次弹出。
     private var dismissedAttentionTaskIDs = Set<String>()
+
+    /// 权限请求工具名字典：taskID → toolName，供弹窗展示
+    private var taskToolNames: [String: String] = [:]
 
     private let overlay = OverlayPanelController()
     private let taskMonitor = TaskMonitor()
@@ -99,7 +104,9 @@ final class AppModel: ObservableObject {
                     commandLine: task.displayCommandLine,
                     attentionType: type,
                     hasSessionRef: task.sessionRef != nil && task.sessionRef?.kittyLeafWindowId != 0,
-                    task: task
+                    task: task,
+                    hookToolName: taskToolNames[taskID],
+                    isHookManaged: bridgeServer.isTaskManagedByHook(taskID)
                 )
             }
             .sorted { a, b in
@@ -154,21 +161,33 @@ final class AppModel: ObservableObject {
     // MARK: - Attention Popup 操作
 
     func sendAttentionYes(for taskID: String) {
+        var resolved = false
         if bridgeServer.isTaskManagedByHook(taskID) {
-            bridgeServer.resolvePermission(taskID: taskID, behavior: "allow")
+            resolved = bridgeServer.resolvePermission(taskID: taskID, behavior: "allow")
         } else {
             taskMonitor.sendTextToTask(id: taskID, text: "y\n")
+            resolved = true
         }
-        dismissAttention(taskID: taskID)
+        if resolved {
+            dismissAttention(taskID: taskID)
+        } else {
+            logger.warning("sendAttentionYes: resolvePermission 失败，taskID=\(taskID)，弹窗保持打开")
+        }
     }
 
     func sendAttentionNo(for taskID: String) {
+        var resolved = false
         if bridgeServer.isTaskManagedByHook(taskID) {
-            bridgeServer.resolvePermission(taskID: taskID, behavior: "deny")
+            resolved = bridgeServer.resolvePermission(taskID: taskID, behavior: "deny")
         } else {
             taskMonitor.sendTextToTask(id: taskID, text: "n\n")
+            resolved = true
         }
-        dismissAttention(taskID: taskID)
+        if resolved {
+            dismissAttention(taskID: taskID)
+        } else {
+            logger.warning("sendAttentionNo: resolvePermission 失败，taskID=\(taskID)，弹窗保持打开")
+        }
     }
 
     func sendAttentionEnter(for taskID: String) {
@@ -186,6 +205,16 @@ final class AppModel: ObservableObject {
         dismissAttention(taskID: task.id)
     }
 
+    /// 仅跳转到 kitty，不 dismiss attention（用于非 hook 管理的 Claude Code prompt）
+    func openAttentionTaskTerminal(_ task: ObservedTask) {
+        guard let sessionRef = task.sessionRef else { return }
+        do {
+            try taskMonitor.jumpTo(sessionRef: sessionRef)
+        } catch {
+            logger.error("跳转 kitty 失败: \(String(describing: error))")
+        }
+    }
+
     func dismissAttentionPopup() {
         // 将当前所有 attention 任务标记为已 dismiss，直到其 attention 状态消失
         dismissedAttentionTaskIDs.formUnion(attentionTaskInfos.keys)
@@ -194,8 +223,9 @@ final class AppModel: ObservableObject {
     }
 
     private func dismissAttention(taskID: String) {
+        // 清除 attention 状态，让收起胶囊恢复正常
+        attentionTaskInfos.removeValue(forKey: taskID)
         dismissedAttentionTaskIDs.insert(taskID)
-        // 操作后立即重新评估弹窗
         updateAttentionPopupVisibility()
     }
 
@@ -368,18 +398,18 @@ final class AppModel: ObservableObject {
     }
 
     private func handleSessionStart(_ payload: ClaudeHookPayload) {
-        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty) else {
-            logger.debug("SessionStart: 无法匹配 TTY=\(payload.terminal_tty ?? "nil")，可能尚未发现进程")
+        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty, cwd: payload.cwd) else {
+            logger.warning("Hook SessionStart: 无法匹配 TTY=\(payload.terminal_tty ?? "nil") cwd=\(payload.cwd ?? "nil")，可能尚未发现进程")
             return
         }
         // 标记该 task 已被 hook 接管，终端扫描将跳过此任务
         taskMonitor.hookManagedTaskIDs.insert(taskID)
-        logger.info("Hook SessionStart → task=\(taskID) 已接管")
+        logger.info("Hook SessionStart → task=\(taskID) tty=\(payload.terminal_tty ?? "nil") cwd=\(payload.cwd ?? "nil") 已接管")
     }
 
     private func handlePermissionRequest(_ payload: ClaudeHookPayload) {
-        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty) else {
-            logger.warning("PermissionRequest: 无法匹配 TTY=\(payload.terminal_tty ?? "nil") 到 task")
+        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty, cwd: payload.cwd) else {
+            logger.warning("Hook PermissionRequest: 无法匹配 TTY=\(payload.terminal_tty ?? "nil") cwd=\(payload.cwd ?? "nil") 到 task，跳过")
             return
         }
 
@@ -389,17 +419,24 @@ final class AppModel: ObservableObject {
         // 标记 hook 接管（首次 PermissionRequest 也表明 hooks 在工作）
         taskMonitor.hookManagedTaskIDs.insert(taskID)
 
-        // 触发 NEED 徽章
-        if attentionTaskInfos[taskID] != .claudeCodePrompt {
-            attentionTaskInfos[taskID] = .claudeCodePrompt
-            updateAttentionPopupVisibility()
-        }
+        // 存储工具名，供弹窗展示
+        taskToolNames[taskID] = payload.tool_name ?? "Unknown"
 
-        logger.info("Hook PermissionRequest → task=\(taskID) tty=\(payload.terminal_tty ?? "nil")")
+        // 清除之前的 dismiss 状态，确保新请求能重新弹窗
+        dismissedAttentionTaskIDs.remove(taskID)
+
+        // 触发 NEED 徽章
+        attentionTaskInfos[taskID] = .claudeCodePrompt
+        updateAttentionPopupVisibility()
+
+        logger.info("Hook PermissionRequest → task=\(taskID) tool=\(payload.tool_name ?? "Unknown") tty=\(payload.terminal_tty ?? "nil") cwd=\(payload.cwd ?? "nil")")
     }
 
     private func handleStopEvent(_ payload: ClaudeHookPayload) {
-        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty) else { return }
+        guard let taskID = taskMonitor.findTaskID(byTTY: payload.terminal_tty, cwd: payload.cwd) else {
+            logger.warning("Hook Stop: 无法匹配 TTY=\(payload.terminal_tty ?? "nil") cwd=\(payload.cwd ?? "nil")，跳过")
+            return
+        }
 
         // 清除 attention 状态
         if attentionTaskInfos[taskID] == .claudeCodePrompt {
@@ -410,8 +447,9 @@ final class AppModel: ObservableObject {
         // 清理 hook session 映射，恢复终端扫描兜底
         bridgeServer.clearTask(taskID)
         taskMonitor.hookManagedTaskIDs.remove(taskID)
+        taskToolNames.removeValue(forKey: taskID)
 
-        logger.info("Hook Stop → task=\(taskID) attention 已清除")
+        logger.info("Hook Stop → task=\(taskID) attention 已清除，已恢复终端扫描")
     }
 
     /// 检测 Hook 配置状态并更新 hookConfigured

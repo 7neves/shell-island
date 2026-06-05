@@ -7,13 +7,11 @@ private final class ClientConnection: @unchecked Sendable {
     let fd: Int32
     let requestId: String
     let sessionID: String
-    let completion: (ClaudePermissionDecision?) -> Void
 
-    init(fd: Int32, requestId: String, sessionID: String, completion: @escaping (ClaudePermissionDecision?) -> Void) {
+    init(fd: Int32, requestId: String, sessionID: String) {
         self.fd = fd
         self.requestId = requestId
         self.sessionID = sessionID
-        self.completion = completion
     }
 }
 
@@ -52,9 +50,9 @@ public final class BridgeServer: @unchecked Sendable {
 
     public func start() throws {
         guard !isRunning else { return }
-        isRunning = true
 
         let fd = try BridgeTransport.createBoundSocket()
+        isRunning = true
         serverFD = fd
 
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue.global(qos: .utility))
@@ -81,9 +79,9 @@ public final class BridgeServer: @unchecked Sendable {
         serverFD = -1
 
         lock.lock()
-        // 给所有 pending 客户端返回 deny
+        // 给所有 pending 客户端返回 allow（fail-open），与 CLI 超时行为保持一致
         for (_, client) in pendingBySession {
-            _ = sendResponse(to: client, decision: nil)  // nil = ack (fail-open)
+            _ = sendResponse(to: client, decision: .allow)
             close(client.fd)
         }
         pendingBySession = [:]
@@ -96,14 +94,15 @@ public final class BridgeServer: @unchecked Sendable {
 
     // MARK: - Permission Resolution (called from AppModel on main actor)
 
-    /// 根据 taskID 解析 permission 请求
-    public func resolvePermission(taskID: String, behavior: String) {
+    /// 根据 taskID 解析 permission 请求，返回 true 表示响应已成功发送
+    @discardableResult
+    public func resolvePermission(taskID: String, behavior: String) -> Bool {
         lock.lock()
         guard let sessionID = taskToSession[taskID],
               let client = pendingBySession[sessionID] else {
             lock.unlock()
             logger.warning("resolvePermission: 未找到 taskID=\(taskID) 的 pending 请求")
-            return
+            return false
         }
         // 清理
         pendingBySession.removeValue(forKey: sessionID)
@@ -115,6 +114,7 @@ public final class BridgeServer: @unchecked Sendable {
         let ok = sendResponse(to: client, decision: decision)
         close(client.fd)
         logger.info("Permission resolved: taskID=\(taskID) behavior=\(behavior) sent=\(ok)")
+        return ok
     }
 
     // MARK: - Task-Session Mapping
@@ -174,20 +174,20 @@ public final class BridgeServer: @unchecked Sendable {
     }
 
     private func handleClient(fd: Int32) {
+        // fdOwner 追踪 fd 生命周期：>= 0 时 defer 负责 close，
+        // 设为 -1 表示所有权已转移（如 PermissionRequest 存入 ClientConnection）
+        var fdOwner = fd
         defer {
-            // 检查 fd 是否已被 resolve 时关闭
-            // 这里做 best-effort close
+            if fdOwner >= 0 { close(fdOwner) }
         }
 
         // 读取请求行（客户端应在连接后立即发送）
         guard let line = BridgeTransport.readLine(from: fd, timeout: 10) else {
-            close(fd)
             return
         }
 
         guard let request = try? BridgeTransport.decodeLine(line, as: BridgeRequest.self) else {
             logger.warning("客户端发送了无效的 JSON，关闭连接")
-            close(fd)
             return
         }
 
@@ -195,7 +195,6 @@ public final class BridgeServer: @unchecked Sendable {
         guard let eventName = payload.eventName else {
             logger.warning("未知 hook 事件: \(payload.hook_event_name)")
             _ = BridgeTransport.writeLine(ackResponse(id: request.id), to: fd)
-            close(fd)
             return
         }
 
@@ -203,21 +202,19 @@ public final class BridgeServer: @unchecked Sendable {
 
         switch eventName {
         case .permissionRequest:
+            fdOwner = -1  // 所有权转移给 ClientConnection
             handlePermissionRequest(request: request, fd: fd)
         case .stop:
-            // 通知 AppModel 清除 attention
             DispatchQueue.main.async { [weak self] in
                 self?.onHookEvent?(payload)
             }
             _ = BridgeTransport.writeLine(ackResponse(id: request.id), to: fd)
-            close(fd)
         default:
             // SessionStart 等事件：通知 AppModel，发送 ack
             DispatchQueue.main.async { [weak self] in
                 self?.onHookEvent?(payload)
             }
             _ = BridgeTransport.writeLine(ackResponse(id: request.id), to: fd)
-            close(fd)
         }
     }
 
@@ -227,13 +224,7 @@ public final class BridgeServer: @unchecked Sendable {
             fd: fd,
             requestId: request.id,
             sessionID: request.payload.session_id
-        ) { [weak self] decision in
-            _ = self  // 保持 self 引用以维持生命周期
-            let response = BridgeResponse(id: request.id, decision: decision)
-            if let data = try? JSONEncoder().encode(response) {
-                _ = BridgeTransport.writeLine(data, to: fd)
-            }
-        }
+        )
 
         lock.lock()
         pendingBySession[request.payload.session_id] = client

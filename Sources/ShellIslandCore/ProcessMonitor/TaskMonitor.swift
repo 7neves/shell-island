@@ -19,14 +19,37 @@ public final class TaskMonitor: ObservableObject {
     /// attention 完全由 Hook 推送。
     public var hookManagedTaskIDs: Set<String> = []
 
-    /// 通过 TTY 查找匹配的任务 ID（供 BridgeServer 使用）
-    public func findTaskID(byTTY tty: String?) -> String? {
+    /// 通过 TTY 查找匹配的任务 ID（供 BridgeServer 使用）。
+    /// 支持 cwd 辅助精准匹配，避免同一 TTY 上多个 Claude Code 进程混淆。
+    public func findTaskID(byTTY tty: String?, cwd: String? = nil) -> String? {
         guard let tty, !tty.isEmpty else { return nil }
-        // 优先匹配 running 任务，其次匹配所有任务
-        if let task = taskState.runningTasks.first(where: { $0.tty == tty }) {
+        // 归一化 TTY：确保以 /dev/ 开头
+        let normalized = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+
+        // 优先：TTY + cwd 精准匹配（同一 TTY 可能有多个不同目录的 Claude Code 进程）
+        if let cwd {
+            if let task = taskState.runningTasks.first(where: {
+                $0.tty == normalized && $0.workingDirectory == cwd
+            }) {
+                return task.id
+            }
+        }
+
+        // 次选：TTY 匹配 running 任务
+        if let task = taskState.runningTasks.first(where: { $0.tty == normalized }) {
             return task.id
         }
-        return taskState.tasks.first(where: { $0.tty == tty })?.id
+
+        // 兜底：TTY 匹配任意任务（含已完成）
+        if let task = taskState.tasks.first(where: { $0.tty == normalized }) {
+            logger.warning("findTaskID: TTY=\(normalized) matched non-running task id=\(task.id) status=\(task.status)")
+            return task.id
+        }
+
+        // 诊断：记录未匹配时的可用 TTY 列表
+        let availableTTYs = taskState.runningTasks.compactMap { $0.tty }
+        logger.warning("findTaskID: TTY=\(normalized) cwd=\(cwd ?? "nil") 未匹配，当前 running TTYs: \(availableTTYs)")
+        return nil
     }
 
     private static let idlePollIntervalSeconds: Double = 2.0

@@ -62,6 +62,7 @@ private struct TaskRowView: View {
                 HStack(spacing: 8) {
                     Text(task.kind.displayName)
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(kindColor(for: task))
                         .lineLimit(1)
 
                     statusBadge
@@ -156,6 +157,16 @@ private struct TaskRowView: View {
                 .transaction { txn in
                     txn.animation = nil
                 }
+        }
+    }
+
+    private func kindColor(for task: ObservedTask) -> Color {
+        switch task.kind {
+        case .brew:        return .secondary
+        case .claudeCode:  return Color(red: 0.85, green: 0.47, blue: 0.33)
+        case .npmRun:      return .green
+        case .pnpmRun:     return .green
+        case .yarnRun:     return .green
         }
     }
 
