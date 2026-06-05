@@ -26,6 +26,10 @@ sleep 1
 # 创建 .app bundle 结构
 mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
 
+# 生成并复制 App 图标
+zsh "$repo_root/scripts/generate-icon.sh"
+cp "$repo_root/.build/AppIcon.icns" "$bundle_dir/Contents/Resources/AppIcon.icns"
+
 # 复制可执行文件
 command cp "$app_binary" "$bundle_binary"
 chmod +x "$bundle_binary"
@@ -53,6 +57,8 @@ cat > "$plist_path" <<EOF
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>Shell Island Dev</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

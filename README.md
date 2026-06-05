@@ -10,7 +10,7 @@ macOS 刘海下的像素风胶囊，实时监控你的终端任务。
 
 ShellIsland 是一个常驻 macOS 菜单栏刘海下方的胶囊形工具。它监控 kitty 终端中运行的 `brew`、`claude`（Claude Code）、`npm run` 等任务，并用复古像素风格展示状态。
 
-<img src="docs/ShellIsland-logo.png" width="128" alt="logo">
+<img src="Logo.png" width="128" alt="logo">
 
 ### 核心功能
 
